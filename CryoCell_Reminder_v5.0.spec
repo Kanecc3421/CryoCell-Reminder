@@ -37,7 +37,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='CryoCell_Reminder_v5.12',
+    name='CryoCell_Reminder_v5.13',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

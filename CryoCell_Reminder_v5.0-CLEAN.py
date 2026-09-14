@@ -1,6 +1,7 @@
 # CryoCell_Reminder_v5.0_!final!
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 import sqlite3
 import datetime
@@ -325,6 +326,40 @@ def configure_box_grid_styles(style):
     style.configure("DragSource.TButton", background="#ffd9a0", foreground="#5c3700", padding=2, font=(FONT_FAMILY, 9, "bold"))
     style.configure("DragSourcePulse.TButton", background="#ff9f0a", foreground="#3e2723", padding=2, font=(FONT_FAMILY, 9, "bold"))
     style.configure("DropTarget.TButton", background="#b9ebc6", foreground="#145c2a", padding=2, font=(FONT_FAMILY, 9, "bold"))
+
+
+def wrap_cell_name_for_grid(name, max_width, max_lines, measure_text):
+    """按格子实际像素宽度换行；空间不足时仅在最后一行显示省略号。"""
+    text = str(name or "").strip()
+    if not text or max_width <= 0 or max_lines <= 0:
+        return ""
+
+    lines = []
+    index = 0
+    while index < len(text) and len(lines) < max_lines:
+        line = ""
+        while index < len(text):
+            candidate = line + text[index]
+            if line and measure_text(candidate) > max_width:
+                break
+            line = candidate
+            index += 1
+            if measure_text(line) > max_width:
+                line = line[:-1]
+                index -= 1
+                break
+        if not line:
+            line = text[index]
+            index += 1
+        lines.append(line)
+
+    if index < len(text):
+        ellipsis = "…"
+        last = lines[-1]
+        while last and measure_text(last + ellipsis) > max_width:
+            last = last[:-1]
+        lines[-1] = (last + ellipsis) if last else ellipsis
+    return "\n".join(lines)
 
 
 def recolor_widget_tree(widget, old_palette):
@@ -1773,9 +1808,10 @@ def refresh_table():
         for row in table.get_children():
             table.delete(row)
 
+        query = search_var.get().strip().lower()
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("""
+        sql = """
             SELECT 
                 c.id,
                 c.cell_name, 
@@ -1786,7 +1822,13 @@ def refresh_table():
                 c.position
             FROM cell_records c
             LEFT JOIN freeze_boxes b ON c.box_id = b.id
-        """)
+        """
+        # 搜索时以冻存盒当前实际占用的格子为唯一数据源，排除已取出、
+        # 未分配或仅存在于历史记录中的位置，避免返回失效位置。
+        if query:
+            sql += " WHERE c.box_id IS NOT NULL AND c.position IS NOT NULL"
+        sql += " ORDER BY COALESCE(b.box_name, ''), COALESCE(c.position, ''), c.id"
+        cursor.execute(sql)
         records = cursor.fetchall()
         conn.close()
 
@@ -1798,7 +1840,6 @@ def refresh_table():
             table.heading(col, text=col)
             table.column(col, width=120 if col != "细胞名称" else 200)
 
-        query = search_var.get().lower()
         count = 0
         for r in records:
             status = "已提醒" if r[4] else "待提醒"
@@ -1812,9 +1853,15 @@ def refresh_table():
                 r[0]   # hidden_id
             )
             
-            # 扩展搜索范围
-            search_text = f"{r[1]}{r[2]}{r[5]}{r[6]}".lower()
+            # 所有内容均来自当前查询结果；紧凑串支持输入“盒名A9”定位。
+            search_text = " ".join(
+                str(value or "") for value in (r[1], r[2], r[3], status, r[5], r[6])
+            ).lower()
+            compact_location = f"{r[5] or ''}{r[6] or ''}".replace(" ", "").lower()
             if not query or query in search_text:
+                table.insert("", tk.END, values=values)
+                count += 1
+            elif query.replace(" ", "") in compact_location:
                 table.insert("", tk.END, values=values)
                 count += 1
 
@@ -2045,6 +2092,10 @@ def manage_boxes():
             self.drag_pulse = False
             self.drop_target = None
             self.cells = {}
+            self.grid_resize_job = None
+            self.cell_text_font = tkfont.Font(
+                self.window, family=FONT_FAMILY, size=9, weight="bold"
+            )
             self.recording = False
             self.recording_started_at = None
             self.recorded_operations = []
@@ -2085,6 +2136,7 @@ def manage_boxes():
             # 网格区
             self.grid_frame = tk.Frame(self.window, bg=APP_BG)
             self.grid_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=6)
+            self.grid_frame.bind("<Configure>", self.on_grid_resize)
 
             # 按钮区
             self.btn_frame = tk.Frame(self.window, bg=APP_BG)
@@ -2159,6 +2211,47 @@ def manage_boxes():
                     self.buttons[pos] = btn
                     self.button_positions[btn] = pos
 
+        def on_grid_resize(self, event=None):
+            """窗口缩放停止片刻后再重排文字，避免连续重绘造成卡顿。"""
+            if self.grid_resize_job is not None:
+                try:
+                    self.window.after_cancel(self.grid_resize_job)
+                except tk.TclError:
+                    pass
+            self.grid_resize_job = self.window.after(70, self.render_grid_cells)
+
+        def render_grid_cells(self):
+            """根据每个格子的实时尺寸，决定细胞名称可显示的行数与长度。"""
+            self.grid_resize_job = None
+            if not self.buttons:
+                return
+            grid_width = max(1, self.grid_frame.winfo_width())
+            grid_height = max(1, self.grid_frame.winfo_height())
+            cell_width = max(36, grid_width / 9 - 8)
+            cell_height = max(32, grid_height / 9 - 8)
+            text_width = max(24, cell_width - 12)
+            max_name_lines = max(1, min(4, int(max(16, cell_height - 26) // 16)))
+
+            for pos, btn in self.buttons.items():
+                if pos in self.cells:
+                    name = self.cells[pos][0]
+                    display_name = wrap_cell_name_for_grid(
+                        name, text_width, max_name_lines, self.cell_text_font.measure
+                    )
+                    btn.config(
+                        text=f"{pos}\n{display_name}",
+                        style="Selected.TButton" if pos in self.selected_pos else "Occupied.TButton"
+                    )
+                    btn.bind("<Enter>", lambda e, p=pos, n=name: self.show_tooltip(e, p, n))
+                    btn.bind("<Leave>", self.hide_tooltip)
+                else:
+                    btn.config(
+                        text=pos,
+                        style="Selected.TButton" if pos in self.selected_pos else "Empty.TButton"
+                    )
+                    btn.unbind("<Enter>")
+                    btn.unbind("<Leave>")
+
         def update_grid(self):
             if not self.box_var.get():
                 return
@@ -2178,25 +2271,7 @@ def manage_boxes():
             cells = {pos: (name, date) for pos, name, date in cursor.fetchall()}
             conn.close()
             self.cells = cells
-
-            for pos, btn in self.buttons.items():
-                if pos in cells:
-                    # 截断细胞名称以适应按钮
-                    name = cells[pos][0]
-                    display_name = name if len(name) <= 8 else name[:5] + "..."
-                    btn.config(
-                        text=f"{pos}\n{display_name}",
-                        style="Selected.TButton" if pos in self.selected_pos else "Occupied.TButton"
-                    )
-                    
-                    # 绑定鼠标事件显示完整名称
-                    btn.bind("<Enter>", lambda e, p=pos, n=name: self.show_tooltip(e, p, n))
-                    btn.bind("<Leave>", self.hide_tooltip)
-                else:
-                    btn.config(text=pos, style="Selected.TButton" if pos in self.selected_pos else "Empty.TButton")
-                    # 移除绑定
-                    btn.unbind("<Enter>")
-                    btn.unbind("<Leave>")
+            self.render_grid_cells()
 
         def start_drag(self, event, pos):
             """仅允许从有细胞的格子开始拖动。"""
@@ -2528,6 +2603,7 @@ def manage_boxes():
                     instruction = f"{source_slot}→{target_slot}"
                     recorded_cell_name = source[1]
                 conn.commit()
+                refresh_table()
                 log_message(action)
                 self.record_operation(
                     operation_type, instruction, recorded_cell_name,
@@ -2693,6 +2769,7 @@ def manage_boxes():
         
             conn.commit()
             conn.close()
+            refresh_table()
 
             for pos, cell_name in released_cells:
                 self.record_operation(
@@ -2777,6 +2854,12 @@ def manage_boxes():
                     return
             if self.tooltip:
                 self.tooltip.destroy()
+            if self.grid_resize_job is not None:
+                try:
+                    self.window.after_cancel(self.grid_resize_job)
+                except tk.TclError:
+                    pass
+                self.grid_resize_job = None
             self.destroy_drag_feedback()
             self.window.destroy()
 
@@ -2813,7 +2896,7 @@ def create_gui():
 
     ttk.Button(
         toolbar, text="关于",
-        command=lambda: messagebox.showinfo("作者", "CryoCell Reminder v5.12\n作者: 威震八方@ZJU")
+        command=lambda: messagebox.showinfo("作者", "CryoCell Reminder v5.13\n作者: 威震八方@ZJU")
     ).grid(row=0, column=0, padx=3, sticky="ew")
     ttk.Button(toolbar, text="导出记录", command=export_to_excel).grid(row=0, column=1, padx=3, sticky="ew")
     ttk.Button(toolbar, text="添加细胞", command=add_record).grid(row=0, column=2, padx=3, sticky="ew")
