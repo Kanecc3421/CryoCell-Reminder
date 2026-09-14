@@ -6,7 +6,7 @@
 
 把散落在 Excel 和纸质记录中的细胞信息，变成真正直观、可拖拽、可执行的冻存盒布局。
 
-![Release](https://img.shields.io/badge/release-v5.12-007AFF?style=flat-square)
+![Release](https://img.shields.io/badge/release-v5.13-007AFF?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows-5B5B5F?style=flat-square&logo=windows)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Storage](https://img.shields.io/badge/data-local%20SQLite-34C759?style=flat-square)
@@ -97,16 +97,16 @@
 
 1. 打开本仓库右侧的 **Releases**；
 2. 进入最新版本；
-3. 在 **Assets** 中下载 `CryoCell_Reminder_v5.12.exe`；
+3. 在 **Assets** 中下载 `CryoCell_Reminder_v5.13.exe`；
 4. 双击运行，无需安装 Python；
 5. 首次使用建议先用测试数据熟悉操作。
 
 > Windows 可能会对尚未购买代码签名证书的独立开发软件显示安全提示。请只从本项目官方 Releases 页面下载，并核对发布页提供的 SHA256。
 
-当前 v5.12 校验值：
+当前 v5.13 校验值：
 
 ```text
-SHA256  F9DAF3374176943C9887D61D8C7AEA09A0E44590057BFF19885989E655D87AB6
+SHA256  2FE1484FC46D4B0BE04602756A028F002A82778ECA9E3E1F33226F3B2207F0A1
 ```
 
 ## 从源代码运行
@@ -125,7 +125,7 @@ pip install pyinstaller
 pyinstaller --noconfirm --clean CryoCell_Reminder_v5.0.spec
 ```
 
-生成的程序位于 `dist/CryoCell_Reminder_v5.12.exe`。
+生成的程序位于 `dist/CryoCell_Reminder_v5.13.exe`。
 
 ## 数据与隐私
 
